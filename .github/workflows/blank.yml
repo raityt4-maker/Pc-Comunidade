@@ -1,0 +1,126 @@
+
+name: PC Comunidade - Windows e GPU
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_number:
+        description: "Número da instância"
+        required: true
+        default: "1"
+        type: string
+
+jobs:
+  diagnose:
+    # Runner padrão: sem GPU dedicada garantida.
+    # Para usar uma GPU real, configure um runner
+    # avançado e substitua esta linha pelo nome dele.
+    runs-on: windows-latest
+
+    timeout-minutes: 30
+
+    steps:
+      - name: Informações do sistema
+        shell: pwsh
+        run: |
+          Write-Host "=== PC DA COMUNIDADE ===" -ForegroundColor Green
+          Write-Host "Instância: ${{ inputs.instance_number }}"
+
+          Get-ComputerInfo |
+            Select-Object WindowsProductName,
+              WindowsVersion, OsArchitecture
+
+          Write-Host "=== PROCESSADOR ==="
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, NumberOfCores,
+              NumberOfLogicalProcessors
+
+          Write-Host "=== MEMÓRIA ==="
+          Get-CimInstance Win32_ComputerSystem |
+            Select-Object TotalPhysicalMemory
+
+      - name: Otimização básica do Windows
+        shell: pwsh
+        run: |
+          Write-Host "=== AJUSTES DE DESEMPENHO ==="
+
+          # Plano de energia de alto desempenho,
+          # caso esteja disponível no runner.
+          powercfg /setactive SCHEME_MIN
+
+          # Reduzir efeitos visuais da conta atual.
+          $visualPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
+
+          New-Item -Path $visualPath -Force |
+            Out-Null
+
+          Set-ItemProperty -Path $visualPath `
+            -Name VisualFXSetting `
+            -Type DWord -Value 2
+
+          Write-Host "Ajustes aplicados."
+
+      - name: Verificar adaptador gráfico
+        shell: pwsh
+        run: |
+          Write-Host "=== GPU DETECTADA ==="
+
+          $gpus = Get-CimInstance Win32_VideoController
+
+          if ($gpus) {
+            foreach ($gpu in $gpus) {
+              Write-Host "Nome: $($gpu.Name)"
+              Write-Host "Driver: $($gpu.DriverVersion)"
+              Write-Host "Processador gráfico: $($gpu.VideoProcessor)"
+              Write-Host "Memória informada: $($gpu.AdapterRAM)"
+              Write-Host "Status: $($gpu.Status)"
+              Write-Host "--------------------"
+            }
+          } else {
+            Write-Host "Nenhum adaptador detectado."
+          }
+
+          Write-Host "=== FERRAMENTAS GRÁFICAS ==="
+
+          $dxdiag = "$env:WINDIR\System32\dxdiag.exe"
+
+          if (Test-Path $dxdiag) {
+            & $dxdiag /whql:off /t "$env:TEMP\dxdiag.txt"
+            Start-Sleep -Seconds 10
+
+            if (Test-Path "$env:TEMP\dxdiag.txt") {
+              Get-Content "$env:TEMP\dxdiag.txt" |
+                Select-String "Card name|Display Memory|Driver Name"
+            }
+          }
+
+      - name: Verificar DirectX e espaço
+        shell: pwsh
+        run: |
+          Write-Host "=== DIRECTX ==="
+
+          Get-ItemProperty `
+            "HKLM:\SOFTWARE\Microsoft\DirectX" `
+            -ErrorAction SilentlyContinue |
+            Select-Object Version
+
+          Write-Host "=== ARMAZENAMENTO ==="
+
+          Get-CimInstance Win32_LogicalDisk |
+            Where-Object DriveType -eq 3 |
+            Select-Object DeviceID,
+              @{Name="Livre_GB";Expression={
+                [math]::Round($_.FreeSpace / 1GB, 2)
+              }},
+              @{Name="Total_GB";Expression={
+                [math]::Round($_.Size / 1GB, 2)
+              }}
+
+      - name: Resumo
+        shell: pwsh
+        run: |
+          Write-Host "Diagnóstico concluído."
+          Write-Host "Instância: ${{ inputs.instance_number }}"
+          Write-Host "Este runner é temporário."
+          Write-Host "Não há garantia de GPU dedicada."
+          
