@@ -1,22 +1,18 @@
 
-name: PC Comunidade - Windows e GPU
+name: PC Comunidade - Windows
 
 on:
   workflow_dispatch:
     inputs:
       instance_number:
-        description: "Número da instância"
+        description: "Número da instância (1-10)"
         required: true
         default: "1"
         type: string
 
 jobs:
-  diagnose:
-    # Runner padrão: sem GPU dedicada garantida.
-    # Para usar uma GPU real, configure um runner
-    # avançado e substitua esta linha pelo nome dele.
+  diagnose-pc:
     runs-on: windows-latest
-
     timeout-minutes: 30
 
     steps:
@@ -30,40 +26,57 @@ jobs:
             Select-Object WindowsProductName,
               WindowsVersion, OsArchitecture
 
-          Write-Host "=== PROCESSADOR ==="
+          Write-Host "`n=== PROCESSADOR ==="
           Get-CimInstance Win32_Processor |
             Select-Object Name, NumberOfCores,
-              NumberOfLogicalProcessors
+              NumberOfLogicalProcessors |
+            Format-List
 
-          Write-Host "=== MEMÓRIA ==="
+          Write-Host "`n=== MEMÓRIA ==="
           Get-CimInstance Win32_ComputerSystem |
-            Select-Object TotalPhysicalMemory
+            Select-Object @{Name="RAM_GB";Expression={
+              [math]::Round($_.TotalPhysicalMemory / 1GB, 2)
+            }} |
+            Format-List
 
       - name: Otimização básica do Windows
         shell: pwsh
         run: |
-          Write-Host "=== AJUSTES DE DESEMPENHO ==="
+          Write-Host "=== OTIMIZANDO WINDOWS ===" -ForegroundColor Cyan
 
-          # Plano de energia de alto desempenho,
-          # caso esteja disponível no runner.
+          # Tentar ativar o plano de alto desempenho
           powercfg /setactive SCHEME_MIN
 
-          # Reduzir efeitos visuais da conta atual.
+          # Reduzir efeitos visuais
           $visualPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
 
           New-Item -Path $visualPath -Force |
             Out-Null
 
-          Set-ItemProperty -Path $visualPath `
+          Set-ItemProperty `
+            -Path $visualPath `
             -Name VisualFXSetting `
-            -Type DWord -Value 2
+            -Type DWord `
+            -Value 2
 
-          Write-Host "Ajustes aplicados."
+          # Desativar transparência para a conta atual
+          $personalize = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 
-      - name: Verificar adaptador gráfico
+          New-Item -Path $personalize -Force |
+            Out-Null
+
+          Set-ItemProperty `
+            -Path $personalize `
+            -Name EnableTransparency `
+            -Type DWord `
+            -Value 0
+
+          Write-Host "Ajustes concluídos."
+
+      - name: Diagnóstico da GPU
         shell: pwsh
         run: |
-          Write-Host "=== GPU DETECTADA ==="
+          Write-Host "=== ADAPTADORES GRÁFICOS ===" -ForegroundColor Cyan
 
           $gpus = Get-CimInstance Win32_VideoController
 
@@ -74,37 +87,23 @@ jobs:
               Write-Host "Processador gráfico: $($gpu.VideoProcessor)"
               Write-Host "Memória informada: $($gpu.AdapterRAM)"
               Write-Host "Status: $($gpu.Status)"
-              Write-Host "--------------------"
+              Write-Host "---------------------------"
             }
           } else {
-            Write-Host "Nenhum adaptador detectado."
+            Write-Host "Nenhum adaptador encontrado."
           }
 
-          Write-Host "=== FERRAMENTAS GRÁFICAS ==="
-
-          $dxdiag = "$env:WINDIR\System32\dxdiag.exe"
-
-          if (Test-Path $dxdiag) {
-            & $dxdiag /whql:off /t "$env:TEMP\dxdiag.txt"
-            Start-Sleep -Seconds 10
-
-            if (Test-Path "$env:TEMP\dxdiag.txt") {
-              Get-Content "$env:TEMP\dxdiag.txt" |
-                Select-String "Card name|Display Memory|Driver Name"
-            }
-          }
-
-      - name: Verificar DirectX e espaço
-        shell: pwsh
-        run: |
-          Write-Host "=== DIRECTX ==="
-
+          Write-Host "`n=== DIRECTX ==="
           Get-ItemProperty `
             "HKLM:\SOFTWARE\Microsoft\DirectX" `
             -ErrorAction SilentlyContinue |
-            Select-Object Version
+            Select-Object Version |
+            Format-List
 
-          Write-Host "=== ARMAZENAMENTO ==="
+      - name: Verificar armazenamento
+        shell: pwsh
+        run: |
+          Write-Host "=== DISCOS ===" -ForegroundColor Cyan
 
           Get-CimInstance Win32_LogicalDisk |
             Where-Object DriveType -eq 3 |
@@ -114,13 +113,15 @@ jobs:
               }},
               @{Name="Total_GB";Expression={
                 [math]::Round($_.Size / 1GB, 2)
-              }}
+              }} |
+            Format-Table -AutoSize
 
-      - name: Resumo
+      - name: Resumo da execução
         shell: pwsh
         run: |
-          Write-Host "Diagnóstico concluído."
+          Write-Host "=== DIAGNÓSTICO CONCLUÍDO ===" -ForegroundColor Green
           Write-Host "Instância: ${{ inputs.instance_number }}"
-          Write-Host "Este runner é temporário."
-          Write-Host "Não há garantia de GPU dedicada."
+          Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "Sistema: Windows"
+          Write-Host "A máquina é temporária e será encerrada."
           
